@@ -1,0 +1,1005 @@
+Cleaning the FDIC BankFind Data
+================
+Last updated: 2024-03-01
+
+## Preliminary Work: Install/Load Packages
+
+To try and ensure that this R Notebook will run successfully, we’ll use
+the [renv
+package](https://cran.r-project.org/web/packages/renv/index.html) to
+create a project-specific library of packages. This will allow us to
+install the packages that we need for this project without affecting any
+other projects that we may be working on. Additionally, the project
+library will track the specific versions of the dependency packages so
+that any updates to those packages will not break this project.
+
+The code chunk below will first install the renv package if it is not
+already installed. Then we will load the package. Next, we’ll use the
+`restore()` function to install any packages listed in the renv.lock
+file. Once these packages are installed, we can load them into the R
+session using the `library()` commands. Below the code chunk, we’ll list
+out the packages that will be used in the project demo. And if you run
+into any trouble using renv, then you can use the second code chunk
+below and that should be an even more reliable approach to install the
+required packages.
+
+``` r
+# Install renv package if not already installed
+if(!"renv" %in% installed.packages()[,"Package"]) install.packages("renv")
+# Load renv package
+library(renv)
+# Use restore() to install any packages listed in the renv.lock file
+renv::restore(clean=TRUE, lockfile="../renv.lock")
+# Load in the packages
+library(readr)
+library(curl)
+library(dplyr)
+library(ggplot2)
+library(fst)
+library(xts)
+library(rmarkdown)
+```
+
+- The [readr package](https://cran.r-project.org/package=readr) is a
+  common package for reading in data files. After installing, the
+  RStudio Environment tab will have a new option to import data sets
+  that uses this package. It will even generate the R code for you to
+  copy and paste into your script.
+- The [dplyr package](https://cran.r-project.org/package=dplyr) package
+  enables additional functionality for transforming data frames.
+- The [ggplot2 package](https://cran.r-project.org/package=ggplot2) lets
+  us generate nice graphics to visualize the data.
+- The [fst package](https://cran.r-project.org/package=fst) is a fast
+  and efficient way to save and load data frames. It is especially
+  useful for large datasets.
+- The [xts package](https://cran.r-project.org/package=xts) allows for
+  some additional time series functionality.
+- The [rmarkdown package](https://cran.r-project.org/package=rmarkdown)
+  is used to generate this R Notebook.
+
+Since the rmarkdown functionality is built into RStudio, this one is
+automatically loaded when we open the RStudio. So no need to use the
+`library()` function for this one. Another observation to make about the
+code chunk above is that it is labeled as ‘setup’, which is a special
+name, which the R Notebook will recognize and automatically run prior to
+running any other code chunk. This is useful for loading in packages and
+setting up other global options that will be used throughout the
+notebook.
+
+Then if you wish to try and update the versions of the various R
+packages in the lock file, you can use the `renv::update()` function to
+update the packages in the project library. However, it is possible that
+these updates could break the code in this notebook. If so, you may need
+to adapt the code to work with the updated packages.
+
+My recommendation is to first run through the code using the versions of
+the packages in the lock file. Then if you want to try and update the
+packages, you can do so and then run through the code again to see if it
+still works. If not, you can always revert back to the lock file
+versions using the `renv::restore()` function.
+
+If you update the packages and get everything working successfully, then
+you can update the lock file using the `renv::snapshot()` function. This
+will update the lock file with the versions of the packages that are
+currently installed in the project library. Then you can commit the
+updated lock file to the repository so that others can use the updated
+versions of the packages.
+
+### Alternative Package Installation Code
+
+If you run into any trouble using renv in the code chunk above, then you
+can use the code chunk below to install the required packages for this
+analysis. This method will first check if you have already installed the
+packages. If any are missing, it will then install them. Then it will
+load the packages into the R session. A potential flaw in this approach
+compared to using renv is that it will simply install the latest
+versions of the packages, which could potentially break some of the code
+in this notebook if any of the updates aren’t backwards compatible.
+
+As long as you have downloaded the entire project repository, the renv
+chunk above will likely be managing the packages. Thus, the `eval=FALSE`
+option is used to prevent this chunk from running unless manually
+executed. So if you only downloaded this one Rmd file, this code chunk
+should take care of installing the packages for you.
+
+``` r
+# Create list of packages needed for this exercise
+list.of.packages = c("readr","curl","dplyr","ggplot2","fst","xts","rmarkdown")
+# Check if any have not yet been installed
+new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+# If any need to be installed, install them
+if(length(new.packages)) install.packages(new.packages)
+# Load in the packages
+library(readr)
+library(curl)
+library(dplyr)
+library(ggplot2)
+library(fst)
+library(xts)
+library(rmarkdown)
+```
+
+## Data Import and Cleaning
+
+Now if you go to the [FDIC BankFind
+API](https://banks.data.fdic.gov/docs/) website and right click on the
+link for the [Institutions (CSV
+format)](https://s3-us-gov-west-1.amazonaws.com/cg-2e5c99a6-e282-42bf-9844-35f5430338a5/downloads/institutions.csv)
+file, then you can copy the link address. Let’s paste that below:
+
+``` r
+institutionsurl = "https://s3-us-gov-west-1.amazonaws.com/cg-2e5c99a6-e282-42bf-9844-35f5430338a5/downloads/institutions.csv"
+```
+
+From this, we can see that the FDIC is using Amazon Web Services to
+store/host their datasets. I’m not sure if the
+“cg-2e5c99a6-e282-42bf-9844-35f5430338a5” portion of the url is linked
+to the version of the dataset in regard to updates. If that changes when
+there is an update, then a more formal API call may be necessary to
+incorporate updates smoothly.
+
+Next, bring this over to RStudio, and in the Environment panel, click
+Import Dataset and select From Text (readr). This will open an
+interactive window where you can paste the url into the top box. Then
+after clicking Update, this will pull the csv file from the url and
+display a preview along with a suite of options for doing some data
+cleaning. Some cleaning techniques, such as factor (categorical)
+variables, are more easily applied after importing the data. But many
+other cleaning/formatting steps can be done from this interactive
+window. *Being able to efficiently use this tool can save lots of time
+since it keeps track of the cleaning steps that you take and
+auto-generates the R code in the bottom-right that you can copy over to
+get started with a particular dataset.*
+
+But before we get too far into the cleaning process, let’s first do a
+quick aside to set up an examination of the impact of this data cleaning
+on the required storage space for the data. If you just want to get on
+with the analysis, you can skip over this next subsection.
+
+### Raw Data
+
+Cleaned and well-formatted datasets often can be stored in more
+efficient ways by various software programs. So to demonstrate this more
+clearly, let’s begin with just a simple auto-import and save that raw
+data. Note that the default options for `read_csv()` result in a warning
+message about parsing. This can be explored more closely with the
+`problems()` command. That displays a table showing 264 errors where the
+column was auto-formatted to a logical format, but the actual data was a
+different format. This can sometimes happen if the first few rows for
+that variable are missing or are 0’s and 1’s.
+
+``` r
+institutions = read_csv(institutionsurl)
+```
+
+    ## Warning: One or more parsing issues, call `problems()` on your data frame for details,
+    ## e.g.:
+    ##   dat <- vroom(...)
+    ##   problems(dat)
+
+    ## Rows: 27824 Columns: 142
+    ## ── Column specification ────────────────────────────────────────────────────────
+    ## Delimiter: ","
+    ## chr  (52): STNAME, ADDRESS, BKCLASS, CHRTAGNT, CONSERVE, CITY, CMSA, COUNTY,...
+    ## dbl  (74): CERT, DOCKET, ACTIVE, ASSET, CHANGEC1, CHANGEC2, CHANGEC3, CHANGE...
+    ## lgl  (14): CHANGEC8, CHANGEC9, CHANGEC10, CHANGEC11, CHANGEC12, CHANGEC13, C...
+    ## date  (2): CFPBEFFDTE, CFPBENDDTE
+    ## 
+    ## ℹ Use `spec()` to retrieve the full column specification for this data.
+    ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+
+``` r
+problems()
+```
+
+Even though there are some errors with the import here, let’s save this
+basic attempt as our initial raw data for future comparisons. As another
+point of comparison, let’s use three different formats for saving the
+data. The first, csv, is the same format as the data was provided in and
+is very portable. The Rds format is R-specific and generally uses
+minimal storage space; however, it can be slower to load large datasets
+compared to the fst format. This last format uses a non-native R package
+`fst` and is optimized for working with large datasets (this one isn’t
+that large).
+
+``` r
+dir.create("Data/", showWarnings=FALSE)
+dir.create("Data/Raw/", showWarnings=FALSE)
+write.csv(institutions,"Data/Raw/institutions.csv")
+saveRDS(institutions,"Data/Raw/institutions.Rds")
+write.fst(institutions,"Data/Raw/institutions.fst")
+```
+
+### Cleaning and Formatting
+
+Using the above mentioned Import Dataset UI, let’s clean up the
+formatting to at least successfully import all of the variables. The
+code chunk below is the result of my manual cleaning of the Institutions
+CSV file with one exception. I replaced the full url in the
+auto-generated code with the one we saved earlier to `institutionsurl`.
+The cleaning steps that I took in the interactive window were switching
+the date variables to date formats (except for the CFPB dates, which
+were in a different format and had year 9999) and fixing the formatting
+several other variables that were identified from the above warning
+output. *I strongly recommend opening the [Institutions Definitions (CSV
+format)](https://banks.data.fdic.gov/docs/institutions_definitions.csv)
+file in Excel to help understand the dataset and cleaning process.*
+
+``` r
+institutions = read_csv(institutionsurl, 
+    col_types = cols(DATEUPDT = col_date(format = "%m/%d/%Y"),
+        EFFDATE = col_date(format = "%m/%d/%Y"),
+        ENDEFYMD = col_date(format = "%m/%d/%Y"),
+        ESTYMD = col_date(format = "%m/%d/%Y"),
+        INSDATE = col_date(format = "%m/%d/%Y"),
+        PROCDATE = col_date(format = "%m/%d/%Y"),
+        # REPDTE = col_date(format = "%m/%d/%Y"),
+        # RISDATE = col_date(format = "%m/%d/%Y"),
+        # RUNDATE = col_date(format = "%m/%d/%Y"),
+        # PROCDATE = col_date(format = "%m/%d/%Y"),
+        # REPDTE = col_date(format = "%m/%d/%Y"),
+        CHANGEC7 = col_character(), CHANGEC8 = col_character(),
+        CHANGEC9 = col_character(), CHANGEC10 = col_character(),
+        CHANGEC11 = col_character(), CHANGEC12 = col_character(),
+        CHANGEC13 = col_character(), CHANGEC14 = col_character(),
+        CHANGEC15 = col_character(),
+        CFPBEFFDTE = col_character(), CFPBENDDTE = col_character(), 
+        REGAGENT2 = col_character(), TE02N528 = col_character(), 
+        TE03N528 = col_character(), TE04N528 = col_character(), 
+        TE05N528 = col_character(), TE06N528 = col_character(), 
+        TE07N528 = col_character(), TE08N528 = col_character(), 
+        TE09N528 = col_character(), TE10N528 = col_character(), 
+        TE02N529 = col_character(), TE03N529 = col_character(), 
+        TE04N529 = col_character(), TE05N529 = col_character(), 
+        TE06N529 = col_character(), CERTCONS = col_character()))
+```
+
+If we save this partially cleaned data frame to a csv file, we can see a
+slight decrease in size, but overall not too much. With the csv and Rds
+formats, this intermediate data frame is roughly 1.5-1.6% smaller than
+the original raw data frame. However, the size of the fst format
+actually got slightly larger.
+
+``` r
+dir.create("Data/Interm/", showWarnings=FALSE)
+write.csv(institutions,"Data/Interm/institutions.csv")
+saveRDS(institutions,"Data/Interm/institutions.Rds")
+write.fst(institutions,"Data/Interm/institutions.fst")
+file.size("Data/Raw/institutions.csv")
+```
+
+    ## [1] 23167190
+
+``` r
+file.size("Data/Interm/institutions.csv")
+```
+
+    ## [1] 22946374
+
+``` r
+file.size("Data/Interm/institutions.csv")/file.size("Data/Raw/institutions.csv")
+```
+
+    ## [1] 0.9904686
+
+``` r
+file.size("Data/Raw/institutions.Rds")
+```
+
+    ## [1] 4515005
+
+``` r
+file.size("Data/Interm/institutions.Rds")
+```
+
+    ## [1] 4452474
+
+``` r
+file.size("Data/Interm/institutions.Rds")/file.size("Data/Raw/institutions.Rds")
+```
+
+    ## [1] 0.9861504
+
+``` r
+file.size("Data/Raw/institutions.fst")
+```
+
+    ## [1] 14670970
+
+``` r
+file.size("Data/Interm/institutions.fst")
+```
+
+    ## [1] 14854497
+
+``` r
+file.size("Data/Interm/institutions.fst")/file.size("Data/Raw/institutions.fst")
+```
+
+    ## [1] 1.01251
+
+Now let’s finish cleaning up the formatting of the other variables.
+Again, these steps are primarily derived from reading through the
+[Institutions
+Definitions](https://banks.data.fdic.gov/docs/institutions_definitions.csv)
+file. So be sure to refer back to that frequently as you run through
+these steps.
+
+#### Logical (Binary) Variables
+
+When there are only two categories in a variable, these can be even more
+efficiently stored by a logical format.
+
+``` r
+institutions$ACTIVE = as.logical(institutions$ACTIVE)
+institutions$CONSERVE = as.logical(institutions$CONSERVE)
+institutions$DENOVO = as.logical(institutions$DENOVO)
+institutions$FEDCHRTR = as.logical(institutions$FEDCHRTR)
+institutions$IBA = as.logical(institutions$IBA)
+institutions$INACTIVE = as.logical(institutions$INACTIVE)
+institutions$INSTCRCD = as.logical(institutions$INSTCRCD)
+institutions$INSBIF = as.logical(institutions$INSBIF)
+institutions$INSCOML = as.logical(institutions$INSCOML)
+institutions$INSDIF = as.logical(institutions$INSDIF)
+institutions$INSFDIC = as.logical(institutions$INSFDIC)
+institutions$INSSAIF = as.logical(institutions$INSSAIF)
+institutions$INSSAVE = as.logical(institutions$INSSAVE)
+institutions$OAKAR = as.logical(institutions$OAKAR)
+```
+
+#### Factor Variables
+
+Now that we have all the data loaded into memory, we can reformat our
+categorical variables into factors so that they are more efficiently
+stored and analyzed by R. Some categorical variables are fairly
+straightforward (e.g. State Name, City, etc) and just require a simple
+conversion using `as.factor()`. Those are all reformatted here.
+
+``` r
+institutions$STNAME = as.factor(institutions$STNAME)
+institutions$CHRTAGNT = as.factor(institutions$CHRTAGNT)
+institutions$CITY = as.factor(institutions$CITY)
+institutions$CMSA = as.factor(institutions$CMSA)
+institutions$COUNTY = as.factor(institutions$COUNTY)
+institutions$FDICDBS = as.factor(institutions$FDICDBS)
+institutions$FDICREGN = as.factor(institutions$FDICREGN)
+institutions$FDICSUPV = as.factor(institutions$FDICSUPV)
+institutions$FLDOFF = as.factor(institutions$FLDOFF)
+institutions$INSAGNT1 = as.factor(institutions$INSAGNT1)
+institutions$INSAGNT2 = as.factor(institutions$INSAGNT2)
+institutions$MSA = as.factor(institutions$MSA)
+institutions$QBPRCOML = as.factor(institutions$QBPRCOML) # Numeric codes, but definitions has no labels
+institutions$REGAGNT = as.factor(institutions$REGAGNT)
+```
+
+#### Encoded Factor Variables
+
+Some other categorical variables in the dataset are encoded in the csv
+file and have more detailed descriptions in the Institutions Definitions
+file. One feature of factor variables in R is that each level (category)
+can have a label in the metadata that is integrated into many other R
+packages. Below, we’ll demonstrate how these labels can be used to
+provide more detail in plots while still being stored efficiently and
+used appropriately in statistical analysis.
+
+##### BKCLASS
+
+From the Institutions Definitions file for the BKCLASS variable:
+
+“A classification code assigned by the FDIC based on the institution’s
+charter type (commercial bank or savings institution), charter agent
+(state or federal), Federal Reserve membership status (Fed member, Fed
+non-member) and its primary federal regulator (state chartered
+institutions are subject to both federal and state supervision).
+
+- N - Commercial bank, national (federal) charter, Fed member, and
+  supervised by the Office of the Comptroller of the Currency (OCC);
+
+- NM - Commercial bank, state charter, Fed non-member, and supervised by
+  the Federal Deposit Insurance Corporation (FDIC);
+
+- OI - Insured U.S. branch of a foreign chartered institution (IBA) and
+  supervised by the OCC or FDIC;
+
+- SB - Federal savings banks, federal charter, supervised by the OCC or
+  before July 21,2011 the Office of Thrift Supervision (OTS);
+
+- SI - State chartered stock savings banks, supervised by the FDIC;
+
+- SL - State chartered stock savings and loan associations, supervised
+  by the FDIC or before July 21,2011 the OTS;
+
+- SM - Commercial bank, state charter, Fed member, and supervised by the
+  Federal Reserve Bank (FRB);
+
+- NC - Noninsured non-deposit commercial banks and/or trust companies
+  regulated by the OCC, a state, or a territory;
+
+- NS - Noninsured stock savings bank supervised by a state or territory;
+
+- CU - state or federally chartered credit unions supervised by the
+  National Credit Union Association (NCUA).”
+
+``` r
+table(institutions$BKCLASS)
+```
+
+    ## 
+    ##     N    NC    NM    NS    OI    SB    SI    SL    SM 
+    ##  6715   142 12179    25    29  1701   914  3347  2772
+
+``` r
+institutions$BKCLASS = factor(institutions$BKCLASS,
+                                levels=c('N','NC','NM','NS','OI','SB','SI','SL','SM'),
+                                labels = c('Commercial Bank - Federal Charter',
+                                           'Commercial Bank/Trust - Noninsured Nondeposit',
+                                           'Commercial Bank - State Charter, Non-Fed Member',
+                                           'Stock Savings Bank - Noninsured',
+                                           'Insured US Branch of Foreign Institution',
+                                           'Federal Savings Bank - Federal Charter',
+                                           'Stock Savings Bank - State Charter',
+                                           'Stock Savings and Loan Assoc. - State Charter',
+                                           'Commercial Bank - State Charter, Fed Member'))
+table(institutions$BKCLASS)
+```
+
+    ## 
+    ##               Commercial Bank - Federal Charter 
+    ##                                            6715 
+    ##   Commercial Bank/Trust - Noninsured Nondeposit 
+    ##                                             142 
+    ## Commercial Bank - State Charter, Non-Fed Member 
+    ##                                           12179 
+    ##                 Stock Savings Bank - Noninsured 
+    ##                                              25 
+    ##        Insured US Branch of Foreign Institution 
+    ##                                              29 
+    ##          Federal Savings Bank - Federal Charter 
+    ##                                            1701 
+    ##              Stock Savings Bank - State Charter 
+    ##                                             914 
+    ##   Stock Savings and Loan Assoc. - State Charter 
+    ##                                            3347 
+    ##     Commercial Bank - State Charter, Fed Member 
+    ##                                            2772
+
+``` r
+bktab = data.frame(table(institutions$BKCLASS))
+names(bktab)[names(bktab)=="Var1"] = "BKCLASS"
+#bktab$perc = round(bktab$Freq/sum(bktab$Freq)*100,2)
+bktab$perc = round(bktab$Freq/sum(bktab$Freq), 4)
+bktab$perc2 = scales::percent(bktab$perc)
+ggplot(bktab, aes(x="", y=perc, fill=reorder(BKCLASS,-Freq))) +
+  geom_col() +
+  coord_polar("y") +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label=perc2), position=position_stack(vjust=0.5)) +
+  labs(title="Count of Banking Institutions by Category (BKCLASS)") +
+  xlab("")
+```
+
+![](README_files/figure-gfm/bkplot-1.png)<!-- -->
+
+##### CLCODE
+
+This one has a fairly large number of categories. The code chunk below
+just uses a factor variable for the numeric codes. I’ll leave the
+labeling for this one as an open issue that you can build out for some
+practice if you wish. The process should be nearly identical to the one
+for BKCLASS above, just with more categories to specify. If you build
+out a code chunk to do this, please send me a copy or push the updates
+to the GitHub repo.
+
+From the Institutions Definitions file for the CLCODE variable:
+
+“A two-digit identifying category of an institution. 03 = National bank,
+Federal Reserve System (FRS) member; 13 = State commercial bank, FRS
+member; 15 = State industrial bank, FRS member; 21 = State commercial
+bank, not FRS member; 23 = State industrial bank, not FRS member; 25 -
+State nonmember mutual bank; 33 = Federal chartered savings and
+co-operative bank - stock; 34 = Federal chartered savings and
+co-operative bank - mutual; 43 = Federal chartered stock savings bank
+(historical); 44 = Federal chartered mutual savings bank (historical);
+35 = State chartered thrift - stock; 36 = State chartered thrift -
+mutual; 37 = Federal chartered thrift - stock; 38 = Federal chartered
+thrift - mutual; 41 = State chartered stock savings and co-operative
+bank; 42 = State chartered mutual savings and co-operative bank; 52 =
+Insured domestic offices of foreign banks (International Banking
+Act(IBA)); 50 = Nondeposit trust company, OCC chartered; 51 = Commercial
+bank; 52 = Noninsured domestic offices of foreign bank (IBA); 53 =
+Industrial bank; 54 = Nondeposit trust company, state chartered, not FRS
+member; 57 = New York investment company; 58 = Nondeposit trust company,
+state chartered, FRS member; 59 = Nondeposit trust company; 61 =
+Noninsured private bank; 62 = Noninsured loan workout bank, OCC
+chartered; 63 = Noninsured loan workout bank, state chartered, FRS
+member; 64 = Noninsured loan workout bank, state chartered, not FRS
+member; 81 = Noninsured stock savings and co-operative bank; 82 =
+Noninsured mutual savings and co-operative bank; 85 = Noninsured stock
+savings and loan association; 86 = Noninsured mutual savings and loan
+association; 89 = Noninsured insurance company.”
+
+``` r
+institutions$CLCODE = as.factor(institutions$CLCODE)
+```
+
+##### FDICDBS
+
+*Note: the definition below has eight FDIC regions; however, the data
+appears to only contain six categories (2, 5, 9, 11, 13, and 14). Using
+the FDICREGN variable, we can manually match these to the codes as in
+the chunk below.*
+
+From the Institutions Definitions file for the FDICDBS variable:
+
+“The FDIC Office assigned to the geographic area. The eight FDIC Regions
+and their respective states are:
+
+- Boston - Connecticut, Maine, Massachusetts, New Hampshire, Rhode
+  Island, Vermont
+
+- New York - Delaware, District of Columbia, Maryland, New Jersey, New
+  York, Pennsylvania, Puerto Rico, U.S. Virgin Islands
+
+- Atlanta - Alabama, Florida, Georgia, North Carolina, South Carolina,
+  Virginia, West Virginia
+
+- Memphis - Arkansas, Kentucky, Louisiana, Mississippi, Tennessee
+
+- Chicago - Illinois, Indiana, Michigan, Ohio, Wisconsin
+
+- Kansas City - Iowa, Kansas, Minnesota, Missouri, Nebraska, North
+  Dakota, South Dakota
+
+- Dallas - Colorado, New Mexico, Oklahoma, Texas
+
+- San Francisco - Alaska, American Samoa, Arizona, California, Guam,
+  Hawaii, Idaho, Montana, Nevada, Oregon, States of Micronesia, Utah,
+  Washington, Wyoming”
+
+``` r
+table(institutions$FDICDBS)
+```
+
+    ## 
+    ##    2    5    9   11   13   14 
+    ## 4056 4658 5521 4576 6239 2774
+
+``` r
+institutions$FDICDBS = factor(institutions$FDICDBS,
+                                levels=c('2','5','9','11','13','14'),
+                                labels = c('New York',
+                                           'Atlanta',
+                                           'Chicago',
+                                           'Kansas City',
+                                           'Dallas',
+                                           'San Francisco'))
+
+table(institutions$FDICDBS)
+```
+
+    ## 
+    ##      New York       Atlanta       Chicago   Kansas City        Dallas 
+    ##          4056          4658          5521          4576          6239 
+    ## San Francisco 
+    ##          2774
+
+If we cross-tabulate this factor variable with the `FDICREGN` variable,
+we can see that they are now identical in regard to the categories. So
+we can actually just remove one of the variables to prevent storing
+redundant data. I think `FDICREGN` is a more intuitive variable name, so
+let’s remove the `FDICDBS` variable.
+
+``` r
+table(institutions$FDICDBS,institutions$FDICREGN)
+```
+
+    ##                
+    ##                 Atlanta Chicago Dallas Kansas City New York San Francisco
+    ##   New York            0       0      0           0     4056             0
+    ##   Atlanta          4658       0      0           0        0             0
+    ##   Chicago             0    5521      0           0        0             0
+    ##   Kansas City         0       0      0        4576        0             0
+    ##   Dallas              0       0   6239           0        0             0
+    ##   San Francisco       0       0      0           0        0          2774
+
+``` r
+institutions = select(institutions,-FDICDBS)
+```
+
+``` r
+fdictab = data.frame(table(institutions$FDICREGN))
+names(fdictab)[names(fdictab)=="Var1"] = "FDICREGN"
+fdictab$perc = round(fdictab$Freq/sum(fdictab$Freq), 4)
+fdictab$perc2 = scales::percent(fdictab$perc)
+ggplot(fdictab, aes(x="", y=perc, fill=reorder(FDICREGN,-Freq))) +
+  geom_col() +
+  coord_polar("y") +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label=perc2), position=position_stack(vjust=0.5)) +
+  labs(title="Count of Banking Institutions by FDIC Region (FDICREGN)") +
+  xlab("")
+```
+
+![](README_files/figure-gfm/fdicplot-1.png)<!-- -->
+
+##### FED
+
+From the Institutions Definitions file for the FDICDBS variable:
+
+“A number used to identify the Federal Reserve district in which the
+institution is located.
+
+- 01 Boston
+
+- 02 New York
+
+- 03 Philadelphia
+
+- 04 Cleveland
+
+- 05 Richmond
+
+- 06 Atlanta
+
+- 07 Chicago
+
+- 08 St. Louis
+
+- 09 Minneapolis
+
+- 10 Kansas city
+
+- 11 Dallas
+
+- 12 San Francisco”
+
+``` r
+table(institutions$FED)
+```
+
+    ## 
+    ##    1    2    3    4    5    6    7    8    9   10   11   12 
+    ## 1104 1354  989 1532 1988 4029 4055 2151 1778 3392 3042 2410
+
+``` r
+institutions$FED = factor(institutions$FED,
+                                levels=c('1','2','3','4','5','6','7','8','9','10','11','12'),
+                                labels = c('Boston', 'New York','Philadelphia','Cleveland','Richmond','Atlanta','Chicago','St. Louis','Minneapolis','Kansas City','Dallas','San Francisco'))
+table(institutions$FED)
+```
+
+    ## 
+    ##        Boston      New York  Philadelphia     Cleveland      Richmond 
+    ##          1104          1354           989          1532          1988 
+    ##       Atlanta       Chicago     St. Louis   Minneapolis   Kansas City 
+    ##          4029          4055          2151          1778          3392 
+    ##        Dallas San Francisco 
+    ##          3042          2410
+
+``` r
+fedtab = data.frame(table(institutions$FED))
+names(fedtab)[names(fedtab)=="Var1"] = "FED"
+fedtab$perc = round(fedtab$Freq/sum(fedtab$Freq), 4)
+fedtab$perc2 = scales::percent(fedtab$perc)
+ggplot(fedtab, aes(x="", y=perc, fill=reorder(FED,-Freq))) +
+  geom_col() +
+  coord_polar("y") +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label=perc2), position=position_stack(vjust=0.5)) +
+  labs(title="Count of Banking Institutions by Fed Region (FED)") +
+  xlab("")
+```
+
+![](README_files/figure-gfm/fedplot-1.png)<!-- -->
+
+##### OTSDIST/OTSREGNM
+
+From the definitions below, we can see that these variables pertain to
+data that is mostly no longer relevant. However, the cleaning for this
+variable can be good practice since there is a typo in one of the
+observations for OTSREGNM
+
+From the Institutions Definitions file for the OTSDIST variable:
+
+“Office of Thrift Supervision (OTS) District - No longer used as of
+7/21/11”
+
+From the Institutions Definitions file for the OTSDIST variable:
+
+“Prior to 7/21/11, the Office of Thrift Supervision (OTS) Region in
+which the institution is physically located. The five OTS Regions and
+their respective states are:
+
+- Northeast - Connecticut, Delaware, Maine, Massachusetts, New
+  Hampshire, New Jersey, New York, Pennsylvania, Rhode Island, Vermont,
+  West Virginia
+
+- Southeast - Alabama, District of Columbia, Florida, Georgia, Maryland,
+  North Carolina, Puerto Rico, South Carolina, U.S. Virgin Islands,
+  Virginia
+
+- Central - Illinois, Indiana, Kentucky, Michigan, Ohio, Tennessee,
+  Wisconsin
+
+- Midwest - Arkansas, Colorado, Iowa, Kansas, Louisiana, Minnesota,
+  Mississippi, Missouri, Nebraska, New Mexico, North Dakota, Oklahoma,
+  South Dakota, Texas
+
+- West - Alaska, American Samoa, Arizona, California, Guam, Hawaii,
+  Idaho, Montana, Nevada, States of Micronesia, Oregon, Utah,
+  Washington, Wyoming”
+
+From the cross-tabulation below, we can see the typo in a single
+observation for OTSREGNM. Similarly, the labels show a West and Western,
+rather than Midwest and West. To verify which corresponds to each
+numeric code in OTSDIST, open the table and look at some examples in
+each category. That should clarify that the “Western” label refers to
+the Midwest category. So we’ll correct this labeling when reformating
+the numeric categories of OTSDIST to a factor variable. Then we can
+remove the OTSREGNM variable since it is just redundant and still has
+the typo.
+
+``` r
+table(institutions$OTSDIST,institutions$OTSREGNM)
+```
+
+    ##    
+    ##     Central Northeast Southeast West Western Wewst
+    ##   1       0      3938         0    0       0     0
+    ##   2       0         0      5931    0       0     0
+    ##   3    4972         0         0    0       0     0
+    ##   4       0         0         0    0    4875     0
+    ##   5       0         0         0 8106       0     1
+
+``` r
+institutions$OTSDIST = factor(institutions$OTSDIST,
+                                levels=c('1','2','3','4','5'),
+                                labels = c('Northeast',
+                                           'Southeast',
+                                           'Central',
+                                           'Midwest',
+                                           'West'))
+
+table(institutions$OTSDIST)
+```
+
+    ## 
+    ## Northeast Southeast   Central   Midwest      West 
+    ##      3938      5931      4972      4875      8107
+
+``` r
+#rm(institutions$OTSREGNM)
+```
+
+## Final Comparisons
+
+Now that we’ve reformatted the full data frame, let’s save those cleaned
+tables in each of the three formats and examine the size differences
+compared to the raw data. Not surprisingly, the csv format is less
+efficient. This is because adding the category labels in text results in
+the csv version of the data being much larger (by about 7%). On the
+other hand, the R-specific formats save much more efficiently than their
+earlier counterparts. The Rds format ends up being 4-5% smaller, and the
+fst format becomes over 10% smaller, albeit still 3x larger than the Rds
+format.
+
+``` r
+dir.create("Data/Clean/", showWarnings=FALSE)
+write.csv(institutions,"Data/Clean/institutions.csv")
+saveRDS(institutions,"Data/Clean/institutions.Rds")
+write.fst(institutions,"Data/Clean/institutions.fst")
+file.size("Data/Raw/institutions.csv")
+```
+
+    ## [1] 23167190
+
+``` r
+file.size("Data/Clean/institutions.csv")
+```
+
+    ## [1] 25850500
+
+``` r
+file.size("Data/Clean/institutions.csv")/file.size("Data/Raw/institutions.csv")
+```
+
+    ## [1] 1.115824
+
+``` r
+file.size("Data/Raw/institutions.Rds")
+```
+
+    ## [1] 4515005
+
+``` r
+file.size("Data/Clean/institutions.Rds")
+```
+
+    ## [1] 4293612
+
+``` r
+file.size("Data/Clean/institutions.Rds")/file.size("Data/Raw/institutions.Rds")
+```
+
+    ## [1] 0.9509651
+
+``` r
+file.size("Data/Raw/institutions.fst")
+```
+
+    ## [1] 14670970
+
+``` r
+file.size("Data/Clean/institutions.fst")
+```
+
+    ## [1] 12626667
+
+``` r
+file.size("Data/Clean/institutions.fst")/file.size("Data/Raw/institutions.fst")
+```
+
+    ## [1] 0.8606566
+
+Then as a final comparison between the data storage formats, let’s see
+how long it takes to load each of the cleaned datasets. Here, we can see
+that the csv is the slowest (and also loses much of the formatting that
+we did). Then from the Rds vs. fst comparison, we can see that the fst
+version of the data loads into memory faster than Rds. However, given
+the small size of the files, the marginally faster load time may not be
+worth the additional storage space. This tradeoff between speed and size
+can persist to larger datasets, and the preferred option is likely to be
+different for various applications and datasets.
+
+``` r
+# Time to Load csv data
+t = proc.time()
+inst = read_csv("Data/Clean/institutions.csv")
+```
+
+    ## New names:
+    ## • `` -> `...1`
+
+    ## Warning: One or more parsing issues, call `problems()` on your data frame for details,
+    ## e.g.:
+    ##   dat <- vroom(...)
+    ##   problems(dat)
+
+    ## Rows: 27824 Columns: 142
+    ## ── Column specification ────────────────────────────────────────────────────────
+    ## Delimiter: ","
+    ## chr  (47): STNAME, ADDRESS, BKCLASS, CHRTAGNT, CITY, CMSA, COUNTY, FDICREGN,...
+    ## dbl  (59): ...1, CERT, DOCKET, ASSET, CHANGEC1, CHANGEC2, CHANGEC3, CHANGEC4...
+    ## lgl  (28): ACTIVE, CHANGEC8, CHANGEC9, CHANGEC10, CHANGEC11, CHANGEC12, CHAN...
+    ## date  (8): DATEUPDT, EFFDATE, ENDEFYMD, ESTYMD, INSDATE, PROCDATE, CFPBEFFDT...
+    ## 
+    ## ℹ Use `spec()` to retrieve the full column specification for this data.
+    ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+
+``` r
+proc.time() - t
+```
+
+    ##    user  system elapsed 
+    ##    0.31    0.06    0.59
+
+``` r
+rm(inst)
+# Time to Load csv data
+t = proc.time()
+inst = readRDS("Data/Clean/institutions.Rds")
+proc.time() - t
+```
+
+    ##    user  system elapsed 
+    ##    0.16    0.02    0.20
+
+``` r
+rm(inst)
+# Time to Load csv data
+t = proc.time()
+inst = read.fst("Data/Clean/institutions.fst")
+proc.time() - t
+```
+
+    ##    user  system elapsed 
+    ##    0.00    0.00    0.06
+
+``` r
+rm(inst)
+```
+
+### The Consolidation of the Banking Industry
+
+ACTIVE - A number indicating the status of an institution.
+1=‘Institutions that are currently open and insured by the FDIC’;
+0=‘Institution closed or not insured by FDIC’
+
+ENDEFYMD - The date that ends or closes out the last structural event
+relating to an institution. For closed institutions, this date
+represents the day that the institution became inactive.
+
+ESTYMD - The date on which the institution or branch began operations.
+
+#### ChatGPT for Initiating Time Series
+
+To aid with the problem-solving aspect of generating our time series of
+active banking institutions, let’s explore the use of ChatGPT to help
+build this out.
+
+The following code chunk is directly from ChatGPT’s (Mar 23, 2023,
+version) response to the following prompt: “If i have a start date and
+end date, how can i use those to create a monthly xts object in R?” The
+response is commented out since I need to do some adaptation to (1)
+actually get the code to run in our current environment and (2) adapting
+the code to my preferred coding style.
+
+``` r
+# library(xts)
+# 
+# # Set start and end dates
+# start_date <- as.Date("2022-01-01")
+# end_date <- as.Date("2023-03-31")
+# 
+# # Create a sequence of dates by month
+# monthly_dates <- seq(start_date, end_date, by = "month")
+# 
+# # Create an empty xts object with monthly dates
+# monthly_xts <- xts(rep(NA, length(monthly_dates)), monthly_dates)
+# 
+# # Fill in the xts object with your data values
+# monthly_xts[time(monthly_xts) %in% time(data_values)] <- data_values
+# 
+# # Aggregate the xts object by month
+# monthly_xts <- apply.monthly(monthly_xts, sum)
+# 
+# # View the resulting monthly xts object
+# monthly_xts
+```
+
+And now my adaptation of the above code to fit our dataset:
+
+``` r
+# Set start and end dates
+start_date = min(institutions$ESTYMD)
+end_date = as.Date(Sys.Date())
+
+# Create a sequence of dates by month
+monthly_dates = seq(start_date, end_date, by="month")
+
+# Create an empty xts object with monthly dates
+df = data.frame(t=-length(monthly_dates):-1,
+                n_estab_all=rep(NA,length(monthly_dates),1),
+                n_close_all=rep(NA,length(monthly_dates),1),
+                n_estab_state = rep(NA,length(monthly_dates),1),
+                n_close_state = rep(NA,length(monthly_dates),1))
+monthly_xts = xts(df, order.by=monthly_dates)
+```
+
+#### Loop through time to count active institutions
+
+Note that the variables we are computing in this loop were pre-allocated
+in the xts object in the code chunk above. This is good practice any
+time you plan to use a loop to fill a data object.
+
+``` r
+for (i in 1:length(monthly_xts$t)) {
+  t = monthly_dates[i]
+  monthly_xts$nesty[i] = sum(institutions$ESTYMD<t)
+  monthly_xts$nclosed[i] = sum(institutions$INACTIVE & institutions$ENDEFYMD<t)
+}
+```
+
+``` r
+monthly_xts$nactive = as.double(monthly_xts$nesty)-as.double(monthly_xts$nclosed)
+```
+
+``` r
+ggplot(monthly_xts,aes(x=index(monthly_xts),y=nactive)) + 
+  geom_line() +
+  ggtitle("Active Banking Institutions in the U.S.") +
+  xlab("") +
+  ylab("Number of Active Institutions")
+```
+
+![](README_files/figure-gfm/plotactive-1.png)<!-- -->
