@@ -1,1 +1,1 @@
-# bank-trends-project
+# Bank Trends Project
